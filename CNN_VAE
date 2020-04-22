@@ -8,3 +8,451 @@ import matplotlib.pyplot as plt
 import torchvision
 import torch.nn.functional as F
 from torchsummary import summary
+**************************************************************************************************************************
+**************************************************************************************************************************
+
+batch_size = 128 #changed from 64 to 100
+epochs = 500
+learning_rate=0.001 # define original learning rate=0.001
+# Define a transform to normalize the data
+transform = transforms.Compose([
+                              transforms.ToTensor(),
+                              transforms.Normalize([0.5], [0.5]),
+                             ])
+
+# Download and load the training data
+train_set = datasets.FashionMNIST('./', download=True, train=True, transform=transform)
+train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
+
+# Download and load the test data
+test_set = datasets.FashionMNIST('./', download=True, train=False, transform=transform)
+test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True)
+
+# notes: The Fashion MNIST dataset consists of Zalando’s article images, with grayscale images of size 28x28, 
+#        developed as a drop-in replacement for the MNIST handwritten digits dataset
+
+**************************************************************************************************************************
+**************************************************************************************************************************
+# Lets see the images first 
+
+labels_map = {0 : 'T-Shirt', 1 : 'Trouser', 2 : 'Pullover', 3 : 'Dress', 4 : 'Coat', 5 : 'Sandal', 6 : 'Shirt',
+              7 : 'Sneaker', 8 : 'Bag', 9 : 'Ankle Boot'};
+fig = plt.figure(figsize=(8,8));
+columns = 3;
+rows = 3;
+for i in range(1, columns*rows +1):
+    img_xy = np.random.randint(len(train_set));
+    img = train_set[img_xy][0][0,:,:]
+    fig.add_subplot(rows, columns, i)
+    plt.title(labels_map[train_set[img_xy][1]])
+    plt.axis('off')
+    plt.imshow(img, cmap='gray')
+plt.show()
+
+def imshow(img,name):
+    img = img / 3 + 0.5     # unnormalize  why you /2  use 0.5 here ??
+    npimg = img.numpy()
+    plt.title(name)
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    plt.show()
+
+x,y = next(iter(train_loader))
+imshow(torchvision.utils.make_grid(x[:6]),'test1')
+
+**************************************************************************************************************************
+**************************************************************************************************************************
+Task 1---CNN
+
+# here we use three CNN, one ReLU FC
+
+class CNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1,32,3,2)
+        self.conv2 = nn.Conv2d(32,64,3,2)
+        self.conv3 = nn.Conv2d(64,128,3,2)
+        self.fc1 = nn.Linear(512,256)
+        self.fc2 = nn.Linear(256,10)
+        self.softmax = nn.Softmax()
+    
+    def forward(self,x):
+        #bs = x.size()[0]
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x= self.conv3(x)
+        x = x.view(x.size(0),-1)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.softmax(x)
+        return x
+           
+  def cal_acc(output,y):
+    correct = 0
+    _,pred = torch.max(output.data,1)
+    correct += (pred==y).sum().item()
+    return correct
+
+# calculate train accuracy 
+def train(x,y):
+    train_loss = 0
+    model.train()
+    #for idx, (x, y) in enumerate(trainloader):
+    opt.zero_grad()
+    output = model(x)
+    correct = cal_acc(output,y)
+    loss = criterion(output,y)
+    loss.backward()
+    #train_loss+=loss.item()
+    opt.step()
+    correct /= x.size()[0]
+    return correct
+
+# calculate test accuracy
+def test():
+    test_loss = 0
+    model.eval()
+    correct = 0
+    with torch.no_grad():
+        for x,y in test_loader:
+            output = model(x)
+            correct += cal_acc(output,y)
+            #loss = criterion(output,y)
+            #test_loss += loss.item()
+    #test_loss /= len(testloader.dataset)
+    return correct/len(test_loader.dataset)
+
+# Notes: train the model
+model = CNN();
+
+# loss function and optimizer 
+opt = torch.optim.Adam(model.parameters(), lr=learning_rate)
+criterion = nn.CrossEntropyLoss()
+
+best_model = None
+best_accuracy = 0
+train_accuracy = []
+test_accuracy = []
+
+# iterate the images
+for i in range(epochs):
+    print("Epoch {} / {}".format(i+1,epochs))
+    x,y = next(iter(train_loader))
+    train_acc = train(x,y)
+    test_acc = test()
+    if best_accuracy<test_acc:
+        print("Improve model accuracy from {} to {}".format(best_accuracy,test_acc))
+        best_accuracy = test_acc
+        torch.save(model, './cnn_model.pth')
+        
+    if (i+1) % 10 == 0:
+        train_accuracy.append(train_acc)
+        test_accuracy.append(test_acc)
+        print("Epoch {}, Training Acc {}, Testing Acc {}".format(i+1,train_acc,test_acc))
+fig = plt.figure()
+plt.plot(range(len(train_accuracy)), train_accuracy, color='blue')
+plt.plot(range(len(test_accuracy)), test_accuracy, color='red')
+plt.legend(['Train Acc', 'Test Acc'], loc='upper right')
+plt.xlabel('Epoch [x10]')
+plt.ylabel('Accuracy')
+
+**************************************************************************************************************************
+**************************************************************************************************************************
+Task2- VAE
+
+class VAE(nn.Module):
+    def __init__(self,z_dim):  # define initail z-dim here ,normally try 64 and 128
+        super().__init__()
+        
+        #Encoder part same with CNN in Q1
+        self.conv1 = nn.Conv2d(1,32,3,2,1) # added one paddle here 
+        self.conv2 = nn.Conv2d(32,64,3,2,2)
+        self.conv3 = nn.Conv2d(64,128,3,2,1)
+        self.fc1 = nn.Linear(2048,256)  # so here is 2048 ranther than 512
+        self.mean = nn.Linear(256,z_dim) # get mean of z_dim
+        self.log_var = nn.Linear(256,z_dim) #get variance of z_dim
+        
+        #Decoder part has two FC and 3 CNNS which corresponds with encoding layers
+        self.fc2 = nn.Linear(z_dim,256)
+        self.fc3 = nn.Linear(256,2048)
+        self.deconv1 = nn.ConvTranspose2d(128,64,2,2)
+        self.deconv2 = nn.ConvTranspose2d(64,32,2,2,1)
+        self.deconv3 = nn.ConvTranspose2d(32,1,2,2)
+        
+    def encoder(self,x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = x.view(x.size()[0],-1)
+        x = self.fc1(x)
+        mean = self.mean(x)
+        log_var = self.log_var(x)
+        
+        return mean,log_var
+    
+    def decoder(self,z):
+        x = self.fc2(z)
+        x = self.fc3(x)
+        x = x.view(x.size()[0],128,4,4)
+        x = self.deconv1(x)
+        x = self.deconv2(x)
+        x = self.deconv3(x)
+
+        return torch.sigmoid(x)
+    
+    def sampling(self, mean, log_var):
+        std = torch.exp(0.5*log_var)
+        eps = torch.randn_like(std)
+        return eps.mul(std).add_(mean) # return z sample
+    
+    def forward(self,x):
+        
+        mean,log_var = self.encoder(x)
+        z = self.sampling(mean,log_var)
+        x = self.decoder(z)
+        return x,mean,log_var
+  
+  # return reconstruction error + KL divergence losses
+def loss_function(recon_x, x, mean, log_var):
+    
+    # compare orinale and reconstruction x, we want recon_x is similar or same with x
+    BCE = F.binary_cross_entropy(recon_x, x, reduction='sum') 
+    # use mean and variance calculate KLD of Z_dim-approach nommarl 
+    KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())  
+    
+    return BCE + KLD
+
+def train(x,y):
+    train_loss = 0
+    vae.train()
+    opt.zero_grad()
+    
+    recon_x,mean,log_var = vae(x)
+    loss = loss_function(recon_x,x,mean,log_var)
+    loss.backward()
+    train_loss+=loss.item()
+    opt.step()
+    train_loss /= x.size()[0]
+    
+    return train_loss
+
+def test():
+    test_loss = 0
+    vae.eval()
+    with torch.no_grad():
+        for x,y in test_loader:
+            recon_x,mean,log_var = vae(x)
+            loss = loss_function(recon_x,x,mean,log_var)
+            test_loss += loss.item()
+    test_loss /= len(test_loader.dataset)
+    return test_loss
+
+def visualize():
+    with torch.no_grad():
+        x,y = next(iter(train_loader))
+        x_,_,_ = vae(x)
+        imshow(torchvision.utils.make_grid(x_[:6]),'Generated Images')
+        
+# train the model with VAE
+vae = VAE(256) #chaneg it from 128 to 256, and try 256
+current_loss = sys.float_info.max
+opt = torch.optim.Adam(vae.parameters())
+train_losses = []
+test_losses = []
+
+for i in range(epochs):
+    print("Epoch {} / {}".format(i+1,epochs))
+    x,y = next(iter(train_loader))
+    train_loss = train(x,y)
+    test_loss = test()
+    print(test_loss)
+    
+    if current_loss>test_loss:
+        print("Improve model testing loss from {} to {}".format(current_loss,test_loss))
+        current_loss = test_loss
+        torch.save(vae, './vae_model.pth')
+        
+    if (i+1) % 10 == 0:
+        visualize()
+        train_losses.append(train_loss)
+        test_losses.append(test_loss)
+        print("Epoch {}, Training loss {}, Testing loss {}".format(i+1,train_loss,test_loss))
+ 
+ # PLOT 2-norms of encoding vectors, which are mean of each encoders
+def L2_dist():
+    means = []
+    L2_means = []
+    model = torch.load('./vae_model.pth')
+    
+    with torch.no_grad():
+        for x,y in test_loader:
+            _,mu,_ = model(x)
+            means.extend(mu.data.numpy())
+    for i in range(len(means)):
+        dis = np.linalg.norm(means[i],ord=2)
+        L2_means.append(dis)
+    plt.hist(L2_means, color = 'red', edgecolor = 'black',
+         bins = 20)
+    plt.title('Histogram of encoding vectors')
+    plt.xlabel('2-norms of the encoding vectors')
+    plt.ylabel('Number')
+    
+L2_dist()
+
+**************************************************************************************************************************
+**************************************************************************************************************************
+# make the comparison betweem original images with the reconstrucions images.
+
+def trans(img):
+    img = img / 3 + 0.5     # unnormalize
+    npimg = img.numpy()
+    return np.transpose(npimg, (1, 2, 0))
+    
+def visualize_stn(x1):
+    
+    model = torch.load('./vae_model.pth')
+
+    with torch.no_grad():
+        
+        x2,_,_ = model(x1)
+        in_grid =trans(torchvision.utils.make_grid(x1[:6]))
+        out_grid = trans(torchvision.utils.make_grid(x2[:6]))
+
+        # Plot the results side-by-side
+        f, axarr = plt.subplots(2, 1)
+        axarr[0].imshow(in_grid)
+        axarr[0].set_title('Original Images')
+
+        axarr[1].imshow(out_grid)
+        axarr[1].set_title('Reconstructed Images')
+x,y = next(iter(train_loader))        
+visualize_stn(x)
+**************************************************************************************************************************
+**************************************************************************************************************************
+Task3---VAE+CNN
+class VAE_CNN(nn.Module):
+    def __init__(self,z_dim): # define the initial file 
+        super().__init__()
+        
+        #Encoder same with Q2
+        self.conv1 = nn.Conv2d(1,32,3,2,1)
+        self.conv2 = nn.Conv2d(32,64,3,2,2)
+        self.conv3 = nn.Conv2d(64,128,3,2,1)
+        self.fc1 = nn.Linear(2048,256)
+        self.mean = nn.Linear(256,z_dim)
+        self.log_var = nn.Linear(256,z_dim)
+        
+        #Decoder same with Q2
+        self.fc2 = nn.Linear(z_dim,256)
+        self.fc3 = nn.Linear(256,2048)
+        self.deconv1 = nn.ConvTranspose2d(128,64,2,2)
+        self.deconv2 = nn.ConvTranspose2d(64,32,2,2,1)
+        self.deconv3 = nn.ConvTranspose2d(32,1,2,2)
+        
+        #Classifer, add one softmax after encoder 
+        self.fc4 = nn.Linear(z_dim,10)
+        self.softmax = nn.Softmax()
+        
+    def encoder(self,x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = x.view(x.size()[0],-1)
+        x = self.fc1(x)
+        mean = self.mean(x)
+        log_var = self.log_var(x)
+        
+        return mean,log_var
+    
+    def decoder(self,z):
+        x = self.fc2(z)
+        x = self.fc3(x)
+        x = x.view(x.size()[0],128,4,4)
+        x = self.deconv1(x)
+        x = self.deconv2(x)
+        x = self.deconv3(x)
+
+        return torch.sigmoid(x)
+    
+    def sampling(self, mean, log_var):
+        std = torch.exp(0.5*log_var)
+        eps = torch.randn_like(std)
+        return eps.mul(std).add_(mean) # return z sample, same with Q2
+    
+    def forward(self,x):
+        
+        mean,log_var = self.encoder(x)
+        z = self.sampling(mean,log_var)
+        x = self.decoder(z)
+        c = self.fc4(mean)
+        c = self.softmax(c)
+        return c,x,mean,log_var
+   # return  cross-entropy + reconstruction error + KL divergence losses
+def loss_function(c,label,recon_x, x, mean, log_var):
+    
+    #we added cross-entropy here compared with Q2
+    CE = F.cross_entropy(c,label,reduction='sum')
+    BCE = F.binary_cross_entropy(recon_x, x, reduction='sum')
+    KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+    return CE+BCE + KLD
+
+
+def cal_acc(output,y):
+    correct = 0
+    _,pred = torch.max(output.data,1)
+    correct += (pred==y).sum().item()
+    return correct
+        
+def train(x,y):
+    train_loss = 0
+    vae_cnn.train()
+    #for idx, (x, y) in enumerate(trainloader):
+    opt.zero_grad()
+    c,recon_x,mean,log_var = vae_cnn(x)
+    correct = cal_acc(c,y)
+    loss = loss_function(c,y,recon_x,x,mean,log_var)
+    loss.backward()
+    #train_loss+=loss.item()
+    opt.step()
+    correct /= x.size()[0]
+    return correct
+
+def test():
+    test_loss = 0
+    vae_cnn.eval()
+    correct = 0
+    with torch.no_grad():
+        for x,y in test_loader:
+            c,recon_x,mean,log_var = vae_cnn(x)
+            correct += cal_acc(c,y)
+    return correct/len(test_loader.dataset)
+ 
+ vae_cnn = VAE_CNN(z_dim=128)
+opt = torch.optim.Adam(vae_cnn.parameters(), lr=learning_rate)
+best_model = None
+best_accuracy = 0
+train_accuracy = []
+test_accuracy = []
+for i in range(epochs):
+    x,y = next(iter(train_loader))
+    train_acc = train(x,y)
+    test_acc = test()
+    
+    if best_accuracy<test_acc:
+        print("Improve model accuracy from {} to {}".format(best_accuracy,test_acc))
+        best_accuracy = test_acc
+        torch.save(vae_cnn, './vae_cnn.pth')
+    if (i+1) % 10 == 0:
+        train_accuracy.append(train_acc)
+        test_accuracy.append(test_acc)
+        print("Epoch {}, Training Acc {}, Testing Acc {}".format(i+1,train_acc,test_acc))
+        
+  fig = plt.figure()
+plt.plot(range(len(train_accuracy)), train_accuracy, color='blue')
+plt.plot(range(len(test_accuracy)), test_accuracy, color='red')
+plt.legend(['Train Acc', 'Test Acc'], loc='lower right')
+plt.xlabel('Epoch [x10]')
+
+
+
+plt.ylabel('Accuray')
+
